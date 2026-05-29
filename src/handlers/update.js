@@ -1,6 +1,27 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { checkOfflineNodes } from '../services/notification.js';
 
+const serverExistenceCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
+async function checkServerExists(db, id) {
+  const now = Date.now();
+  const cached = serverExistenceCache.get(id);
+
+  if (cached && now - cached.timestamp < CACHE_TTL) {
+    return cached.exists;
+  }
+
+  const result = await db.prepare(
+    'SELECT 1 FROM servers WHERE id = ?'
+  ).bind(id).first();
+
+  const exists = !!result;
+  serverExistenceCache.set(id, { exists, timestamp: now });
+
+  return exists;
+}
+
 export async function handleUpdate(request, env, ctx) {
   try {
     const data = await request.json();
@@ -13,9 +34,7 @@ export async function handleUpdate(request, env, ctx) {
     let countryCode = request.cf?.country || 'XX';
     if (countryCode.toUpperCase() === 'TW') countryCode = 'CN';
 
-    const serverExists = await env.DB.prepare(
-      'SELECT * FROM servers WHERE id = ?'
-    ).bind(id).first();
+    const serverExists = await checkServerExists(env.DB, id);
     
     if (!serverExists) {
       return new Response('Server not found', { status: 404 });
